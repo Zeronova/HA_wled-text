@@ -17,13 +17,5 @@
     "abort": {
       "already_configured": "Dieser WLED-Controller ist bereits konfiguriert."
     }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Segment-Vorlagen",
-        "description": "Leer lassen für manuelle Eingabe.\n\nJinja2-Vorlagen möglich, z.B.:\n  {{ state_translated('sensor.temperatur') }}\n  Heizung: {{ states('climate.wohnzimmer') }}"
-      }
-    }
   }
 }

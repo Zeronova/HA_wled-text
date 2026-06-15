@@ -21,10 +21,6 @@ DATA_WLED_VERSION = "wled_version"
 DATA_WLED_NAME = "wled_name"
 DATA_SEG_COUNT = "seg_count"
 
-# Options keys
-OPT_SEG_TEMPLATE_PREFIX = "seg_"
-OPT_SEG_TEMPLATE_SUFFIX = "_template"
-
 # API endpoints
 ENDPOINT_INFO = "/json/info"
 ENDPOINT_STATE = "/json/state"
