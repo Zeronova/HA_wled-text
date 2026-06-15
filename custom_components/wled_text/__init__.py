@@ -7,6 +7,7 @@ via the WLED JSON API. Supports templates for dynamic content.
 from __future__ import annotations
 
 import asyncio
+import importlib
 from typing import Any
 
 import aiohttp
@@ -174,6 +175,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
+
+    # Pre-import platforms to avoid blocking import_module warning in HA 2026.6+
+    # (async_forward_entry_setups does lazy imports internally)
+    for platform in PLATFORMS:
+        await hass.async_add_executor_job(
+            importlib.import_module, f"{__name__}.{platform}"
+        )
 
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
