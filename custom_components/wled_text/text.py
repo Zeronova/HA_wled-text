@@ -1,17 +1,14 @@
 """Text platform for the WLED Text Display integration.
 
-Creates one text entity per WLED segment. Setting the text entity
-pushes the value to the corresponding WLED segment.
-
-Special behaviour: if the stored value contains Jinja2 template
-delimiters ({{ or {%), it's treated as a template and auto-rendered
-on entity state changes. Static values are pushed as-is.
+Creates one text entity per WLED segment.  The stored value is always
+treated as a Jinja2 template and rendered before being pushed to WLED.
+Plain text (no template delimiters) renders to itself.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from typing import Any
 
 from homeassistant.components.text import TextEntity
 from homeassistant.config_entries import ConfigEntry
@@ -30,18 +27,6 @@ _ENTITY_PATTERNS = [
     re.compile(r"""is_state\s*\(\s*['\"]([^'\"]+)['\"]\s*,"""),
     re.compile(r"""state_attr\s*\(\s*['\"]([^'\"]+)['\"]\s*,"""),
 ]
-
-# RenderInfo from homeassistant.helpers.template for accurate entity extraction
-_HAS_RENDER_INFO = False
-try:
-    from homeassistant.helpers.template import (  # type: ignore[attr-defined]
-        RenderInfo,
-        render_info_cv as _render_info_cv,
-    )
-
-    _HAS_RENDER_INFO = True
-except ImportError:
-    pass
 
 
 async def async_setup_entry(
@@ -64,8 +49,8 @@ async def async_setup_entry(
     )
 
 
-def _extract_entities_via_regex(template_str: str) -> set[str]:
-    """Extract entity IDs from a template string via regex."""
+def _extract_entities(template_str: str) -> set[str]:
+    """Extract entity IDs referenced in a template string."""
     entities: set[str] = set()
     for pattern in _ENTITY_PATTERNS:
         for match in pattern.finditer(template_str):
@@ -78,9 +63,9 @@ def _extract_entities_via_regex(template_str: str) -> set[str]:
 class WledTextEntity(TextEntity):
     """Text entity for a single WLED segment.
 
-    When native_value contains template delimiters ({{ / {%), it is
-    treated as a Jinja2 template and auto-rendered on state changes.
-    Otherwise the value is pushed to WLED verbatim.
+    The stored value is always treated as a Jinja2 template.
+    Plain text renders to itself.  The rendered result is pushed to
+    WLED and re-evaluated whenever a referenced entity changes.
     """
 
     _attr_has_entity_name = True
@@ -95,7 +80,6 @@ class WledTextEntity(TextEntity):
         self._coordinator = coordinator
         self._segment_id = segment_id
         self._template: Template | None = None
-        self._template_raw: str = ""
         self._unsub_state_tracker: callback | None = None
         self._attr_native_value = ""
         self._attr_unique_id = f"{coordinator.entry_id}_seg_{segment_id}"
@@ -106,37 +90,24 @@ class WledTextEntity(TextEntity):
         """Return device info from coordinator."""
         return self._coordinator.device_info
 
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra state attributes."""
-        attrs: dict[str, Any] = {}
-        if self._template_raw:
-            attrs["template"] = self._template_raw
-        return attrs
-
     # --- template lifecycle ------------------------------------------------
 
-    def _init_template(self, template_str: str) -> None:
-        """Set up template tracking from a raw template string."""
-        self._template_raw = template_str
+    def _apply_template(self, template_str: str) -> None:
+        """Set up the template and start tracking its entities."""
         self._template = Template(template_str, self.hass)
-
-        # Extract entity references (RenderInfo first, regex fallback)
-        entities = self._extract_entities()
-
+        self._stop_tracking()
+        entities = _extract_entities(template_str)
         if entities:
-            self._stop_tracking()
+            LOGGER.debug(
+                "Segment %d tracking entities: %s",
+                self._segment_id,
+                entities,
+            )
             self._unsub_state_tracker = async_track_state_change_event(
                 self.hass,
                 list(entities),
                 self._handle_state_change,
             )
-
-    def _clear_template(self) -> None:
-        """Remove template tracking."""
-        self._template_raw = ""
-        self._template = None
-        self._stop_tracking()
 
     def _stop_tracking(self) -> None:
         """Stop tracking state changes."""
@@ -144,43 +115,10 @@ class WledTextEntity(TextEntity):
             self._unsub_state_tracker()
             self._unsub_state_tracker = None
 
-    def _is_template_string(self, value: str) -> bool:
-        """Check if a string looks like a Jinja2 template."""
-        return "{{" in value or "{%" in value
-
-    def _extract_entities(self) -> set[str]:
-        """Extract entity IDs referenced by the template.
-
-        Uses RenderInfo if available (most accurate), falls back to
-        regex-based extraction.
-        """
-        entities: set[str] = set()
-
-        if _HAS_RENDER_INFO and self._template is not None:
-            try:
-                render_info = RenderInfo()
-                token = _render_info_cv.set(render_info)
-                try:
-                    self._template.async_render()
-                except Exception:
-                    pass  # Collection happens during rendering
-                finally:
-                    _render_info_cv.reset(token)
-
-                entities = render_info.entities
-            except Exception:
-                pass
-
-        if not entities:
-            entities = _extract_entities_via_regex(self._template_raw)
-
-        return entities
-
-    def _render_template(self) -> str:
-        """Render the template and return the result.
-
-        Returns empty string on error.
-        """
+    def _render(self) -> str:
+        """Render the template and return the result."""
+        if self._template is None:
+            return self._attr_native_value or ""
         try:
             result = self._template.async_render()
             return str(result) if result is not None else ""
@@ -194,37 +132,21 @@ class WledTextEntity(TextEntity):
 
     async def _handle_state_change(self, event: Event) -> None:
         """Handle a state change event for a tracked entity."""
-        if not self._template:
-            return
-        rendered = self._render_template()
-        if rendered != self._attr_native_value:
-            LOGGER.debug(
-                "Segment %d template re-rendered: %r -> %r",
-                self._segment_id,
-                self._attr_native_value,
-                rendered,
-            )
-            self._attr_native_value = rendered
-            self.async_write_ha_state()
-            self._coordinator.async_schedule_push(self._segment_id, rendered)
+        rendered = self._render()
+        LOGGER.debug(
+            "Segment %d re-rendered after state change: %r",
+            self._segment_id,
+            rendered,
+        )
+        self._coordinator.async_schedule_push(self._segment_id, rendered)
 
     async def async_set_value(self, value: str) -> None:
-        """Set the text value.
-
-        If the value looks like a Jinja2 template, it's stored as such
-        and auto-rendered when referenced states change.  Static text
-        is pushed to WLED immediately.
-        """
-        if self._is_template_string(value):
-            self._init_template(value)
-            rendered = self._render_template()
-            self._attr_native_value = rendered
-        else:
-            self._clear_template()
-            self._attr_native_value = value
-
+        """Set the template value and push the rendered result to WLED."""
+        self._attr_native_value = value
+        self._apply_template(value)
         self.async_write_ha_state()
-        self._coordinator.async_schedule_push(self._segment_id, self._attr_native_value)
+        rendered = self._render()
+        self._coordinator.async_schedule_push(self._segment_id, rendered)
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up resources when entity is removed."""
