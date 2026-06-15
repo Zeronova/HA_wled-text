@@ -1,0 +1,29 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "WLED Controller hinzufügen",
+        "description": "Verbinde einen WLED-Controller, um Text auf seinen Segmenten anzuzeigen.",
+        "data": {
+          "name": "Anzeigename",
+          "host": "Host / IP-Adresse",
+          "port": "Port"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Keine Verbindung zum WLED-Controller möglich. Prüfe IP-Adresse und Port."
+    },
+    "abort": {
+      "already_configured": "Dieser WLED-Controller ist bereits konfiguriert."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Segment-Vorlagen",
+        "description": "Leer lassen für manuelle Eingabe.\n\nJinja2-Vorlagen möglich, z.B.:\n  {{ state_translated('sensor.temperatur') }}\n  Heizung: {{ states('climate.wohnzimmer') }}"
+      }
+    }
+  }
+}

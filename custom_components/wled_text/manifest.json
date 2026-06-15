@@ -1,0 +1,12 @@
+{
+  "domain": "wled_text",
+  "name": "WLED Text Display",
+  "codeowners": ["@zeronova"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/Zeronova/HA_wled-text",
+  "integration_type": "hub",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "0.1.0"
+}
